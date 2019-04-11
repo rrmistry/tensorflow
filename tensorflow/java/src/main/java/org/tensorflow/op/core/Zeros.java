@@ -33,18 +33,10 @@ import org.tensorflow.op.annotation.Operator;
  *
  * @param <T> constant type
  */
+/*
 @Operator
 public class Zeros<T> implements Op, Operand<T> {
 
-  /**
-   * Creates a zeroed tensor given its type and shape.
-   *
-   * @param scope is a scope used to add the underlying operation
-   * @param dims a 1-D operand that represents the shape of the output tensor
-   * @param type the output tensor datatype
-   * @return a constant tensor initialized with zeros
-   * @throws IllegalArgumentException if the tensor type or shape cannot be initialized with zeros.
-   */
   public static <T, U extends Number> Zeros<T> create(Scope scope, Operand<U> dims, Class<T> type) {
     Scope childScope = scope.withSubScope("Zeros"); // If scope had an op name set, it will prevail on "Zeros"
     int zeroSize = DataType.fromClass(type).byteSize();
@@ -66,3 +58,4 @@ public class Zeros<T> implements Op, Operand<T> {
     this.fill = fill;
   }
 }
+*/

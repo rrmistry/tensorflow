@@ -23,13 +23,34 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.media.ImageReader.OnImageAvailableListener;
+import android.os.AsyncTask;
 import android.os.SystemClock;
 import android.util.Size;
 import android.util.TypedValue;
 import android.view.Display;
 import android.view.Surface;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+
+import java.io.BufferedOutputStream;
+import java.io.BufferedWriter;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
 import java.util.List;
 import java.util.Vector;
+
+import org.json.JSONObject;
 import org.tensorflow.demo.OverlayView.DrawCallback;
 import org.tensorflow.demo.env.BorderedText;
 import org.tensorflow.demo.env.ImageUtils;
@@ -169,12 +190,56 @@ public class ClassifierActivity extends CameraActivity implements OnImageAvailab
             cropCopyBitmap = Bitmap.createBitmap(croppedBitmap);
             if (resultsView == null) {
               resultsView = (ResultsView) findViewById(R.id.results);
+            } else {
+              executePost("https://api.powerbi.com/beta/.../datasets/.../rows?key=P%2B%2F4H9iwDcAusi1WT6CA7DeAyoAlcodJ7aFxuUgZvvveFWVeai1wXOxXLnIJNaP1%2BHYkGr0FjspHrh2gOuFxmA%3D%3D",
+                      results);
             }
             resultsView.setResults(results);
             requestRender();
             readyForNextImage();
           }
         });
+  }
+
+  public static void executePost(String urlPath, List<Classifier.Recognition> results) {
+    // https://stackoverflow.com/questions/2938502/sending-post-data-in-android
+    String urlString = urlPath; // URL to call
+    String data = "["; //data to post
+    if (results == null || results.size() <= 0) {
+      return;
+    }
+    int index = 0;
+    for (Classifier.Recognition r : results) {
+      if (index > 0){
+        data += ",";
+      }
+      data += "{\"Object\": \"" + r.getTitle() + "\"";
+      data += ",\"Probability\": \"" + r.getConfidence().toString() + "\"";
+      data += ",\"Time\": \"2019-04-11T14:52:57.329Z\"";
+      data += "}";
+      index++;
+    }
+    data += "]";
+    OutputStream out = null;
+
+    try {
+      URL url = new URL(urlString);
+      HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
+      urlConnection.setRequestMethod("POST");
+      out = new BufferedOutputStream(urlConnection.getOutputStream());
+
+      BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(out, "UTF-8"));
+      writer.write(data);
+      writer.flush();
+      writer.close();
+      out.close();
+
+      urlConnection.connect();
+      String response = urlConnection.getResponseMessage();
+      System.out.println(response);
+    } catch (Exception e) {
+      System.out.println(e.getMessage());
+    }
   }
 
   @Override
