@@ -442,6 +442,16 @@ class _SubclassModel(keras.Model):
   """A Keras subclass model."""
 
   def __init__(self, layers, *args, **kwargs):
+    """Instantiate a model.
+
+    Args:
+      layers: a list of layers to be added to the model.
+      *args: Model's args
+      **kwargs: Model's keyword args, at most one of
+        input_tensor -> the input tensor required for ragged/sparse input.
+    """
+
+    inputs = kwargs.pop('input_tensor', None)
     super(_SubclassModel, self).__init__(*args, **kwargs)
     # Note that clone and build doesn't support lists of layers in subclassed
     # models. Adding each layer directly here.
@@ -449,6 +459,9 @@ class _SubclassModel(keras.Model):
       setattr(self, self._layer_name_for_i(i), layer)
 
     self.num_layers = len(layers)
+
+    if inputs is not None:
+      self._set_inputs(inputs)
 
   def _layer_name_for_i(self, i):
     return 'layer{}'.format(i)
@@ -485,11 +498,33 @@ class _SubclassModelCustomBuild(keras.Model):
 def get_model_from_layers(layers,
                           input_shape=None,
                           input_dtype=None,
-                          name=None):
-  """Builds a model from a sequence of layers."""
+                          name=None,
+                          input_ragged=None,
+                          input_sparse=None):
+  """Builds a model from a sequence of layers.
+
+  Args:
+    layers: The layers used to build the network.
+    input_shape: Shape tuple of the input or 'TensorShape' instance.
+    input_dtype: Datatype of the input.
+    name: Name for the model.
+    input_ragged: Boolean, whether the input data is a ragged tensor.
+    input_sparse: Boolean, whether the input data is a sparse tensor.
+
+  Returns:
+    A Keras model.
+  """
+
   model_type = get_model_type()
   if model_type == 'subclass':
-    return _SubclassModel(layers, name=name)
+    inputs = None
+    if input_ragged or input_sparse:
+      inputs = keras.Input(
+          shape=input_shape,
+          dtype=input_dtype,
+          ragged=input_ragged,
+          sparse=input_sparse)
+    return _SubclassModel(layers, name=name, input_tensor=inputs)
 
   if model_type == 'subclass_custom_build':
     layer_generating_func = lambda: layers
@@ -498,8 +533,12 @@ def get_model_from_layers(layers,
   if model_type == 'sequential':
     model = keras.models.Sequential(name=name)
     if input_shape:
-      model.add(keras.layers.InputLayer(input_shape=input_shape,
-                                        dtype=input_dtype))
+      model.add(
+          keras.layers.InputLayer(
+              input_shape=input_shape,
+              dtype=input_dtype,
+              ragged=input_ragged,
+              sparse=input_sparse))
     for layer in layers:
       model.add(layer)
     return model
@@ -508,7 +547,11 @@ def get_model_from_layers(layers,
     if not input_shape:
       raise ValueError('Cannot create a functional model from layers with no '
                        'input shape.')
-    inputs = keras.Input(shape=input_shape, dtype=input_dtype)
+    inputs = keras.Input(
+        shape=input_shape,
+        dtype=input_dtype,
+        ragged=input_ragged,
+        sparse=input_sparse)
     outputs = inputs
     for layer in layers:
       outputs = layer(outputs)

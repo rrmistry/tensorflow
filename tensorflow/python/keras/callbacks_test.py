@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import collections
 import csv
+import json
 import os
 import re
 import shutil
@@ -146,6 +147,7 @@ class CallbackCountsTest(keras_parameterized.TestCase):
   def test_callback_hooks_are_called_in_fit(self, data):
     x, y = data
     val_x, val_y = np.ones((4, 10)), np.ones((4, 1))
+    is_sequence = isinstance(x, keras.utils.data_utils.Sequence)
 
     model = self._get_model()
     counter = Counter()
@@ -153,7 +155,8 @@ class CallbackCountsTest(keras_parameterized.TestCase):
         x,
         y,
         validation_data=(val_x, val_y),
-        batch_size=2,
+        batch_size=2 if not is_sequence else None,
+        steps_per_epoch=5 if is_sequence else None,
         epochs=5,
         callbacks=[counter])
 
@@ -181,10 +184,16 @@ class CallbackCountsTest(keras_parameterized.TestCase):
                                   ('with_sequence', _get_sequence()))
   def test_callback_hooks_are_called_in_evaluate(self, data):
     x, y = data
+    is_sequence = isinstance(x, keras.utils.data_utils.Sequence)
 
     model = self._get_model()
     counter = Counter()
-    model.evaluate(x, y, batch_size=2, callbacks=[counter])
+    model.evaluate(
+        x,
+        y,
+        batch_size=2 if not is_sequence else None,
+        steps=5 if is_sequence else None,
+        callbacks=[counter])
     self._check_counts(
         counter, {
             'on_test_batch_begin': 5,
@@ -197,10 +206,15 @@ class CallbackCountsTest(keras_parameterized.TestCase):
                                   ('with_sequence', _get_sequence()))
   def test_callback_hooks_are_called_in_predict(self, data):
     x = data[0]
+    is_sequence = isinstance(x, keras.utils.data_utils.Sequence)
 
     model = self._get_model()
     counter = Counter()
-    model.predict(x, batch_size=2, callbacks=[counter])
+    model.predict(
+        x,
+        batch_size=2 if not is_sequence else None,
+        steps=5 if is_sequence else None,
+        callbacks=[counter])
     self._check_counts(
         counter, {
             'on_predict_batch_begin': 5,
@@ -526,7 +540,7 @@ class KerasCallbacksTest(keras_parameterized.TestCase):
         mode=mode,
         save_freq=3)
 
-  def _run_load_weights_on_restart_test_common_iterations(self):
+  def _get_dummy_resource_for_model_checkpoint_testing(self):
 
     def get_input_datasets():
       # Simple training input.
@@ -552,12 +566,19 @@ class KerasCallbacksTest(keras_parameterized.TestCase):
 
     temp_dir = self.get_temp_dir()
     filepath = os.path.join(temp_dir, 'checkpoint.epoch{epoch:02d}.h5')
-    initial_epochs = 3
 
     # The filepath shouldn't exist at the beginning.
     self.assertFalse(os.path.exists(filepath))
     callback = keras.callbacks.ModelCheckpoint(
         filepath=filepath, save_weights_only=True)
+
+    return model, train_ds, callback, filepath
+
+  def _run_load_weights_on_restart_test_common_iterations(self):
+
+    (model, train_ds, callback,
+     filepath) = self._get_dummy_resource_for_model_checkpoint_testing()
+    initial_epochs = 3
     model.fit(train_ds, epochs=initial_epochs, callbacks=[callback])
 
     # The files should exist after fitting with callback.
@@ -677,6 +698,23 @@ class KerasCallbacksTest(keras_parameterized.TestCase):
 
     self.assertNotAllClose(weights_before_additional_fit,
                            weights_after_additional_fit)
+
+  def test_fit_with_ModelCheckpoint_with_tf_config(self):
+    (model, train_ds, callback,
+     _) = self._get_dummy_resource_for_model_checkpoint_testing()
+
+    os.environ['TF_CONFIG'] = json.dumps({
+        'cluster': {
+            'worker': ['localhost:23333']
+        },
+        'task': {
+            'type': 'worker',
+            'index': 0
+        }
+    })
+
+    # `model.fit()` should work regardless of the presence of `TF_CONFIG`.
+    model.fit(train_ds, epochs=1, callbacks=[callback])
 
   def test_EarlyStopping(self):
     with self.cached_session():

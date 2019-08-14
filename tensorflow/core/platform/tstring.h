@@ -48,10 +48,23 @@ namespace tensorflow {
 class tstring {
   std::string str_;
 
- public:
-  tstring() : str_() {}
+  template <typename T, typename = void>
+  struct ResizeUninitialized {
+    static void Resize(T& s, size_t new_size) { s.resize(new_size); }
+  };
 
-  tstring(const tstring& str) = default;
+  template <typename T>
+  struct ResizeUninitialized<
+      T, decltype(std::declval<T>().__resize_default_init(0))> {
+    static void Resize(T& s, size_t new_size) {
+      s.__resize_default_init(new_size);
+    }
+  };
+
+ public:
+  tstring() = default;
+
+  tstring(const tstring&) = default;
 
   tstring(const std::string& str) : str_(str) {}
 
@@ -63,7 +76,9 @@ class tstring {
                             std::is_same<T, absl::string_view>::value, T>>
   explicit tstring(const T& str) : str_(str.data(), str.size()) {}
 
-  ~tstring() {}
+  tstring(tstring&&) noexcept = default;
+
+  ~tstring() = default;
 
   tstring& operator=(const tstring& str) = default;
 
@@ -86,6 +101,8 @@ class tstring {
 
     return *this;
   }
+
+  tstring& operator=(tstring&&) noexcept = default;
 
   bool operator<(const tstring& o) const { return str_ < o.str_; }
 
@@ -119,11 +136,15 @@ class tstring {
 
   const char& operator[](size_t i) const { return str_[i]; }
 
-  char* data() { return str_.data(); }
+  char* data() { return &str_[0]; }
 
   char& operator[](size_t i) { return str_[i]; }
 
   void resize(size_t new_size) { str_.resize(new_size); }
+
+  void resize_uninitialized(size_t new_size) {
+    ResizeUninitialized<decltype(str_)>::Resize(str_, new_size);
+  }
 
   tstring& assign(const char* str, size_t len) {
     str_.assign(str, len);

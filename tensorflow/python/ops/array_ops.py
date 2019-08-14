@@ -197,25 +197,14 @@ def identity(input, name=None):  # pylint: disable=redefined-builtin
     A `Tensor`. Has the same type as `input`.
   """
   if context.executing_eagerly() and not hasattr(input, "graph"):
+    # Make sure we get an input with handle data attached from resource
+    # variables. Variables have correct handle data when graph building.
     input = ops.convert_to_tensor(input)
-    in_device = input.backing_device
-    # TODO(ashankar): Does 'identity' need to invoke execution callbacks?
-    context_device = context.context().device_name
-    if not context_device:
-      context_device = "/job:localhost/replica:0/task:0/device:CPU:0"
-    if context_device == in_device:
-      return input
-    else:
-      copied = input._copy()  # pylint: disable=protected-access
-      if hasattr(copied, "_handle_data"):
-        copied._handle_data = input._handle_data  # pylint: disable=protected-access
-      return copied
-  else:
-    ret = gen_array_ops.identity(input, name=name)
-    # Propagate handle data for happier shape inference for resource variables.
-    if hasattr(input, "_handle_data"):
-      ret._handle_data = input._handle_data  # pylint: disable=protected-access
-    return ret
+  ret = gen_array_ops.identity(input, name=name)
+  # Propagate handle data for happier shape inference for resource variables.
+  if hasattr(input, "_handle_data"):
+    ret._handle_data = input._handle_data  # pylint: disable=protected-access
+  return ret
 
 
 # pylint: disable=redefined-builtin,protected-access
@@ -2500,7 +2489,7 @@ def ones_like_v2(
     input,  # pylint: disable=redefined-builtin
     dtype=None,
     name=None):
-  """Creates a tensor with all elements set to zero.
+  """Creates a tensor with all elements set to one.
 
   Given a single tensor (`tensor`), this operation returns a tensor of the
   same type and shape as `tensor` with all elements set to 1. Optionally,
@@ -2521,7 +2510,7 @@ def ones_like_v2(
     name: A name for the operation (optional).
 
   Returns:
-    A `Tensor` with all elements set to zero.
+    A `Tensor` with all elements set to one.
   """
   return ones_like_impl(input, dtype, name, optimize=True)
 
@@ -3952,36 +3941,19 @@ def gather(params,
     A `Tensor`. Has the same type as `params`.
   """
   del validate_indices
-  if compat.forward_compatible(2019, 8, 10):
-    if axis is None:
-      axis = batch_dims
-    if axis != 0:
-      return gen_array_ops.gather_v2(
-          params, indices, axis, batch_dims=batch_dims, name=name)
-    try:
-      # TODO(apassos) find a less bad way of detecting resource variables
-      # without introducing a circular dependency.
-      return params.sparse_read(indices, name=name)
-    except AttributeError:
-      return gen_array_ops.gather_v2(
-          params, indices, axis, name=name)
 
-  if batch_dims != 0:
-    with ops.name_scope(name, "Gather", [params, indices, axis]):
-      return _batch_gather(params, indices, batch_dims, axis)
   if axis is None:
     axis = batch_dims
-  if axis != 0:
-    # Note that we do a sparse_read here to avoid snapshotting the entire
-    # resource variable and doing a gather, which can be inefficient and lead to
-    # subtle race conditions. TODO(apassos) implement axis != 0 on sparse_read
-    return gen_array_ops.gather_v2(params, indices, axis, name=name)
+  if tensor_util.constant_value(axis) != 0:
+    return gen_array_ops.gather_v2(
+        params, indices, axis, batch_dims=batch_dims, name=name)
   try:
-    # TODO(apassos) find a less bad way of detecting resource variables without
-    # introducing a circular dependency.
+    # TODO(apassos) find a less bad way of detecting resource variables
+    # without introducing a circular dependency.
     return params.sparse_read(indices, name=name)
   except AttributeError:
-    return gen_array_ops.gather_v2(params, indices, axis, name=name)
+    return gen_array_ops.gather_v2(
+        params, indices, axis, name=name)
 
 
 @tf_export("gather", v1=[])

@@ -23,6 +23,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Traits.h"  // TF:local_config_mlir
 #include "mlir/IR/Attributes.h"  // TF:local_config_mlir
@@ -114,9 +115,15 @@ LogicalResult VerifyControlOperandsAfterAllData(Operation *op) {
   return success();
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.graph
 //===----------------------------------------------------------------------===//
+
+FetchOp GraphOp::GetFetch() { return llvm::cast<FetchOp>(GetBody().back()); }
+
+namespace {
 
 LogicalResult Verify(GraphOp graph) {
   auto *executorDialect = graph.getDialect();
@@ -204,9 +211,13 @@ ParseResult ParseGraphOp(OpAsmParser *parser, OperationState *result) {
   return success();
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.fetch
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 void Print(FetchOp fetch, OpAsmPrinter *p) {
   *p << fetch.getOperationName();
@@ -232,9 +243,15 @@ ParseResult ParseFetchOp(OpAsmParser *parser, OperationState *result) {
   );
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.island
 //===----------------------------------------------------------------------===//
+
+YieldOp IslandOp::GetYield() { return llvm::cast<YieldOp>(GetBody().back()); }
+
+namespace {
 
 LogicalResult Verify(IslandOp island) {
   if (island.GetBody().empty())
@@ -321,9 +338,13 @@ ParseResult ParseIslandOp(OpAsmParser *parser, OperationState *result) {
   return success();
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.yield
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 void Print(YieldOp yield, OpAsmPrinter *p) {
   *p << yield.getOperationName();
@@ -347,9 +368,13 @@ ParseResult ParseYieldOp(OpAsmParser *parser, OperationState *result) {
       parser->parseOptionalAttributeDict(result->attributes));
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.Switch
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 ParseResult ParseSwitchOp(OpAsmParser *parser, OperationState *result) {
   SmallVector<OpAsmParser::OperandType, 2> op_infos;
@@ -404,9 +429,13 @@ void Print(SwitchOp switch_op, OpAsmPrinter *p) {
   p->printOptionalAttrDict(switch_op.getAttrs());
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.SwitchN
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 LogicalResult Verify(SwitchNOp switchn) {
   IntegerAttr num_outs = switchn.getAttrOfType<IntegerAttr>("num_outs");
@@ -473,8 +502,9 @@ ParseResult ParseSwitchNOp(OpAsmParser *parser, OperationState *result) {
 
   // `types` already contains the type for the data, add an i32 for the
   // output_index, and then the optional control inputs.
-  types.push_back(parser->getBuilder().getIntegerType(32));
-  Type control_type = ControlType::get(parser->getBuilder().getContext());
+  auto builder = parser->getBuilder();
+  types.push_back(builder.getTensorType({}, builder.getIntegerType(32)));
+  Type control_type = ControlType::get(builder.getContext());
   types.append(op_infos.size() - 2, control_type);
 
   if (parser->resolveOperands(op_infos, types, loc, result->operands))
@@ -487,9 +517,13 @@ ParseResult ParseSwitchNOp(OpAsmParser *parser, OperationState *result) {
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.Merge
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 LogicalResult Verify(MergeOp merge) {
   if (!merge.getNumOperands())
@@ -596,9 +630,13 @@ ParseResult ParseMergeOp(OpAsmParser *parser, OperationState *result) {
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.Enter
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 // Default number for the parallel_iterations attributes on Enter nodes.
 constexpr int kDefaultParallelIterations = 10;
@@ -682,9 +720,13 @@ ParseResult ParseEnterOp(OpAsmParser *parser, OperationState *result) {
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.NextIteration.Source
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 LogicalResult Verify(NextIterationSourceOp source) {
   Value *token = source.token();
@@ -712,9 +754,13 @@ ParseResult ParseNextIterationSourceOp(OpAsmParser *parser,
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.NextIteration.Sink
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 LogicalResult Verify(NextIterationSinkOp sink) {
   Value *token = sink.token();
@@ -764,9 +810,13 @@ ParseResult ParseNextIterationSinkOp(OpAsmParser *parser,
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.Exit
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 void Print(ExitOp exit, OpAsmPrinter *p) {
   *p << exit.getOperationName() << ' ';
@@ -792,9 +842,13 @@ ParseResult ParseExitOp(OpAsmParser *parser, OperationState *result) {
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.ControlTrigger
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 void Print(ControlTriggerOp trigger, OpAsmPrinter *p) {
   *p << trigger.getOperationName() << ' ';
@@ -818,9 +872,13 @@ ParseResult ParseControlTriggerOp(OpAsmParser *parser, OperationState *result) {
   return parser->parseOptionalAttributeDict(result->attributes);
 }
 
+}  // anonymous namespace
+
 //===----------------------------------------------------------------------===//
 // tf_executor.LoopCond
 //===----------------------------------------------------------------------===//
+
+namespace {
 
 void Print(LoopCondOp loop_cond, OpAsmPrinter *p) {
   *p << loop_cond.getOperationName() << ' ';
@@ -908,11 +966,10 @@ struct DropEmptyGraph : public OpRewritePattern<GraphOp> {
                                      PatternRewriter &rewriter) const override {
     Block &block = op.GetBody();
     // Check if graph only has one fetch.
-    auto fetch_op = llvm::dyn_cast<FetchOp>(block.front());
-    if (!fetch_op) return matchFailure();
+    if (&block.front() != &block.back()) return matchFailure();
 
     // Map graph results to fetch operands.
-    llvm::SmallVector<Value *, 8> new_rets(fetch_op.fetches());
+    llvm::SmallVector<Value *, 8> new_rets(op.GetFetch().fetches());
     rewriter.replaceOp(op, new_rets);
 
     return matchSuccess();
@@ -931,25 +988,21 @@ struct HoistInnerOpsSingleIslandGraph : public OpRewritePattern<GraphOp> {
     // Check if graph only has one island.
     if (!HasSingleOpInBlock<IslandOp>(&block)) return matchFailure();
 
-    auto fetch_op = llvm::cast<FetchOp>(block.back());
+    FetchOp fetch_op = op.GetFetch();
     auto island_op = llvm::cast<IslandOp>(block.front());
-    auto yield_op = llvm::cast<YieldOp>(island_op.GetBody().back());
+    YieldOp yield_op = island_op.GetYield();
 
-    // Mapping from island results to inner ops results.
-    llvm::SmallDenseMap<Value *, Value *, 8> island_rets_to_ops;
-    for (auto ops_and_ret_vals :
-         llvm::zip(island_op.outputs(), yield_op.fetches())) {
-      island_rets_to_ops.insert(
-          {std::get<0>(ops_and_ret_vals), std::get<1>(ops_and_ret_vals)});
-    }
-
-    // Map graph results to inner ops results.
+    // Map graph results to inner ops results of single island.
     llvm::SmallVector<Value *, 8> new_rets;
-    for (auto *fetch : fetch_op.fetches()) {
-      if (auto *op = island_rets_to_ops.lookup(fetch))
-        new_rets.push_back(op);
-      else
-        new_rets.push_back(fetch);
+    for (Value *operand : fetch_op.fetches()) {
+      if (operand->getDefiningOp() != island_op) {
+        // Operand is not from island, simply propagate it out.
+        new_rets.push_back(operand);
+      } else {
+        // Lookup yield operand in island for inner op result.
+        auto result = llvm::cast<OpResult>(operand);
+        new_rets.push_back(yield_op.getOperand(result->getResultNumber()));
+      }
     }
 
     // Move inner ops from island to block containing graph.

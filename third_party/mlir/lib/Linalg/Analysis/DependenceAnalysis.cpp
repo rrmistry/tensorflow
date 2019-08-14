@@ -49,11 +49,11 @@ Value *Aliases::find(Value *v) {
     if (isa<BlockArgument>(v))
       return v;
     if (auto slice = dyn_cast_or_null<SliceOp>(v->getDefiningOp())) {
-      auto it = aliases.insert(std::make_pair(v, find(slice.getBaseView())));
+      auto it = aliases.insert(std::make_pair(v, find(slice.view())));
       return it.first->second;
     }
     if (auto view = dyn_cast_or_null<ViewOp>(v->getDefiningOp())) {
-      auto it = aliases.insert(std::make_pair(v, view.getSupportingBuffer()));
+      auto it = aliases.insert(std::make_pair(v, view.buffer()));
       return it.first->second;
     }
     if (auto view = dyn_cast_or_null<SubViewOp>(v->getDefiningOp())) {

@@ -188,8 +188,8 @@ port::Status StreamExecutor::Init(DeviceOptions device_options) {
 
 port::Status StreamExecutor::Init() { return Init(DeviceOptions::Default()); }
 
-bool StreamExecutor::GetKernel(const MultiKernelLoaderSpec &spec,
-                               KernelBase *kernel) {
+port::Status StreamExecutor::GetKernel(const MultiKernelLoaderSpec &spec,
+                                       KernelBase *kernel) {
   return implementation_->GetKernel(spec, kernel);
 }
 
@@ -197,8 +197,8 @@ void StreamExecutor::UnloadKernel(const KernelBase *kernel) {
   implementation_->UnloadKernel(kernel);
 }
 
-bool StreamExecutor::LoadModule(const MultiModuleLoaderSpec &spec,
-                                ModuleHandle *module_handle) {
+port::Status StreamExecutor::LoadModule(const MultiModuleLoaderSpec &spec,
+                                        ModuleHandle *module_handle) {
   return implementation_->LoadModule(spec, module_handle);
 }
 
@@ -434,10 +434,11 @@ rng::RngSupport *StreamExecutor::AsRng() {
   return rng_.get();
 }
 
-bool StreamExecutor::Launch(Stream *stream, const ThreadDim &thread_dims,
-                            const BlockDim &block_dims,
-                            const KernelBase &kernel,
-                            const KernelArgsArrayBase &args) {
+port::Status StreamExecutor::Launch(Stream *stream,
+                                    const ThreadDim &thread_dims,
+                                    const BlockDim &block_dims,
+                                    const KernelBase &kernel,
+                                    const KernelArgsArrayBase &args) {
   SubmitTrace(&TraceListener::LaunchSubmit, stream, thread_dims, block_dims,
               kernel, args);
 

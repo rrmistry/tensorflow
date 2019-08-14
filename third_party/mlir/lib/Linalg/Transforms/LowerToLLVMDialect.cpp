@@ -39,6 +39,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/LowerAffine.h"
 #include "mlir/Transforms/Passes.h"
+
+#include "llvm/ADT/SetVector.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -386,6 +388,7 @@ public:
   PatternMatchResult
   matchAndRewrite(Operation *op, ArrayRef<Value *> operands,
                   ConversionPatternRewriter &rewriter) const override {
+    SliceOpOperandAdaptor adaptor(operands);
     auto sliceOp = cast<SliceOp>(op);
     auto viewDescriptorTy = convertLinalgType(sliceOp.getViewType(), lowering);
     auto viewType = sliceOp.getBaseViewType();
@@ -406,53 +409,45 @@ public:
     // Declare the view descriptor and insert data ptr.
     Value *desc = undef(viewDescriptorTy);
     desc = insertvalue(viewDescriptorTy, desc,
-                       getViewPtr(viewType, operands[0]), pos(0));
+                       getViewPtr(viewType, adaptor.view()), pos(0));
 
     // TODO(ntv): extract sizes and emit asserts.
     SmallVector<Value *, 4> strides(viewType.getRank());
-    for (int dim = 0, e = viewType.getRank(); dim < e; ++dim) {
-      strides[dim] = extractvalue(int64Ty, operands[0], pos({3, dim}));
+    for (int i = 0, e = viewType.getRank(); i < e; ++i) {
+      strides[i] = extractvalue(int64Ty, adaptor.view(), pos({3, i}));
     }
 
     // Compute and insert base offset.
-    Value *baseOffset = extractvalue(int64Ty, operands[0], pos(1));
-    for (int j = 0, e = viewType.getRank(); j < e; ++j) {
-      Value *indexing = operands[1 + j];
+    Value *baseOffset = extractvalue(int64Ty, adaptor.view(), pos(1));
+    for (int i = 0, e = viewType.getRank(); i < e; ++i) {
+      Value *indexing = adaptor.indexings()[i];
       Value *min =
-          sliceOp.getIndexing(j)->getType().isa<RangeType>()
+          sliceOp.indexing(i)->getType().isa<RangeType>()
               ? static_cast<Value *>(extractvalue(int64Ty, indexing, pos(0)))
               : indexing;
-      Value *product = mul(min, strides[j]);
+      Value *product = mul(min, strides[i]);
       baseOffset = add(baseOffset, product);
     }
     desc = insertvalue(viewDescriptorTy, desc, baseOffset, pos(1));
 
-    // Compute and insert view sizes (max - min along the range).  Skip the
-    // non-range operands as they will be projected away from the view.
-    int i = 0;
-    for (Value *index : sliceOp.getIndexings()) {
-      if (!index->getType().isa<RangeType>())
-        continue;
-
-      Value *rangeDescriptor = operands[1 + i];
-      Value *min = extractvalue(int64Ty, rangeDescriptor, pos(0));
-      Value *max = extractvalue(int64Ty, rangeDescriptor, pos(1));
-      Value *size = sub(max, min);
-
-      desc = insertvalue(viewDescriptorTy, desc, size, pos({2, i}));
-      ++i;
-    }
-
-    // Compute and insert view strides.  Step over the strides that correspond
-    // to non-range operands as they are projected away from the view.
-    i = 0;
-    for (int j = 0, e = strides.size(); j < e; ++j) {
-      if (!sliceOp.getIndexing(j)->getType().isa<RangeType>())
-        continue;
-      Value *step = extractvalue(int64Ty, operands[1 + j], pos(2));
-      Value *stride = mul(strides[j], step);
-      desc = insertvalue(viewDescriptorTy, desc, stride, pos({3, i}));
-      ++i;
+    // Compute and insert view sizes (max - min along the range) and strides.
+    // Skip the non-range operands as they will be projected away from the view.
+    int numNewDims = 0;
+    for (auto en : llvm::enumerate(sliceOp.indexings())) {
+      Value *indexing = en.value();
+      if (indexing->getType().isa<RangeType>()) {
+        int i = en.index();
+        Value *rangeDescriptor = adaptor.indexings()[i];
+        Value *min = extractvalue(int64Ty, rangeDescriptor, pos(0));
+        Value *max = extractvalue(int64Ty, rangeDescriptor, pos(1));
+        Value *step = extractvalue(int64Ty, rangeDescriptor, pos(2));
+        Value *size = sub(max, min);
+        Value *stride = mul(strides[i], step);
+        desc = insertvalue(viewDescriptorTy, desc, size, pos({2, numNewDims}));
+        desc =
+            insertvalue(viewDescriptorTy, desc, stride, pos({3, numNewDims}));
+        ++numNewDims;
+      }
     }
 
     rewriter.replaceOp(op, desc);
@@ -512,9 +507,9 @@ public:
     desc = insertvalue(viewDescriptorTy, desc, baseOffset, pos(1));
 
     // Compute and insert view sizes (max - min along the range).
-    int numIndexings = llvm::size(viewOp.getIndexings());
+    int numRanges = llvm::size(viewOp.ranges());
     Value *runningStride = constant(int64Ty, IntegerAttr::get(indexTy, 1));
-    for (int i = numIndexings - 1; i >= 0; --i) {
+    for (int i = numRanges - 1; i >= 0; --i) {
       // Update stride.
       Value *rangeDescriptor = operands[1 + i];
       Value *step = extractvalue(int64Ty, rangeDescriptor, pos(2));
@@ -545,7 +540,7 @@ static FuncOp getLLVMLibraryCallImplDefinition(FuncOp libFn) {
   }
   SmallVector<Type, 4> fnArgTypes;
   for (auto t : libFn.getType().getInputs()) {
-    assert(t.isa<LLVMType>() &&
+    assert(t && t.isa<LLVMType>() &&
            "Expected LLVM Type for argument while generating library Call "
            "Implementation Definition");
     fnArgTypes.push_back(t.cast<LLVMType>().getPointerTo());
@@ -577,12 +572,8 @@ getLLVMLibraryCallDeclaration(Operation *op, LLVMTypeConverter &lowering,
 
   // Get the Function type consistent with LLVM Lowering.
   SmallVector<Type, 4> inputTypes;
-  for (auto operand : op->getOperands()) {
-    // TODO(ravishankarm): convertLinalgType handles only a subset of Linalg
-    // types. Handle other types (as well as non-Linalg types) either here or in
-    // convertLinalgType.
-    inputTypes.push_back(convertLinalgType(operand->getType(), lowering));
-  }
+  for (auto operand : op->getOperands())
+    inputTypes.push_back(lowering.convertType(operand->getType()));
   assert(op->getNumResults() == 0 &&
          "Library call for linalg operation can be generated only for ops that "
          "have void return types");
@@ -600,9 +591,7 @@ static void getLLVMLibraryCallDefinition(FuncOp fn,
   auto implFn = getLLVMLibraryCallImplDefinition(fn);
 
   // Generate the function body.
-  fn.addEntryBlock();
-
-  OpBuilder builder(fn.getBody());
+  OpBuilder builder(fn.addEntryBlock());
   edsc::ScopedContext scope(builder, fn.getLoc());
   SmallVector<Value *, 4> implFnArgs;
 
@@ -634,15 +623,15 @@ public:
     return convertLinalgType(t, *this);
   }
 
-  void addLibraryFnDeclaration(FuncOp fn) {
-    libraryFnDeclarations.push_back(fn);
-  }
+  void addLibraryFnDeclaration(FuncOp fn) { libraryFnDeclarations.insert(fn); }
 
-  ArrayRef<FuncOp> getLibraryFnDeclarations() { return libraryFnDeclarations; }
+  ArrayRef<FuncOp> getLibraryFnDeclarations() {
+    return libraryFnDeclarations.getArrayRef();
+  }
 
 private:
   /// List of library functions declarations needed during dialect conversion
-  SmallVector<FuncOp, 2> libraryFnDeclarations;
+  llvm::SetVector<FuncOp> libraryFnDeclarations;
 };
 } // end anonymous namespace
 
@@ -678,11 +667,13 @@ static void
 populateLinalgToLLVMConversionPatterns(LinalgTypeConverter &converter,
                                        OwningRewritePatternList &patterns,
                                        MLIRContext *ctx) {
-  patterns.insert<BufferAllocOpConversion, BufferDeallocOpConversion,
-                  BufferSizeOpConversion, DimOpConversion,
-                  LinalgOpConversion<DotOp>, LinalgOpConversion<MatmulOp>,
-                  LoadOpConversion, RangeOpConversion, SliceOpConversion,
-                  StoreOpConversion, ViewOpConversion>(ctx, converter);
+  patterns
+      .insert<BufferAllocOpConversion, BufferDeallocOpConversion,
+              BufferSizeOpConversion, DimOpConversion,
+              LinalgOpConversion<DotOp>, LinalgOpConversion<FillOp>,
+              LinalgOpConversion<MatmulOp>, LoadOpConversion, RangeOpConversion,
+              SliceOpConversion, StoreOpConversion, ViewOpConversion>(
+          ctx, converter);
 }
 
 namespace {
@@ -733,8 +724,7 @@ void LowerLinalgToLLVMPass::runOnModule() {
   target.addLegalDialect<LLVM::LLVMDialect>();
   target.addDynamicallyLegalOp<FuncOp>(
       [&](FuncOp op) { return converter.isSignatureLegal(op.getType()); });
-  if (failed(applyPartialConversion(module, target, std::move(patterns),
-                                    &converter))) {
+  if (failed(applyPartialConversion(module, target, patterns, &converter))) {
     signalPassFailure();
   }
 
@@ -744,8 +734,8 @@ void LowerLinalgToLLVMPass::runOnModule() {
   }
 }
 
-ModulePassBase *mlir::linalg::createLowerLinalgToLLVMPass() {
-  return new LowerLinalgToLLVMPass();
+std::unique_ptr<ModulePassBase> mlir::linalg::createLowerLinalgToLLVMPass() {
+  return llvm::make_unique<LowerLinalgToLLVMPass>();
 }
 
 static PassRegistration<LowerLinalgToLLVMPass>

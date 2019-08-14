@@ -1277,7 +1277,9 @@ ops.Tensor._override_operator("__ge__", gen_math_ops.greater_equal)
 
 def tensor_equals(self, other):
   """Compares two tensors element-wise for equality."""
-  if ops.Tensor._USE_EQUALITY and ops.executing_eagerly_outside_functions():
+  g = getattr(self, "graph", None)
+  if (ops.Tensor._USE_EQUALITY and ops.executing_eagerly_outside_functions() and
+      (g is None or g._building_function)):  # pylint: disable=protected-access
     return gen_math_ops.equal(self, other)
   else:
     # In legacy graph mode, tensor equality is object equality
@@ -1349,20 +1351,9 @@ def range(start, limit=None, delta=1, dtype=None, name="range"):  # pylint: disa
     start, limit = 0, start
 
   with ops.name_scope(name, "Range", [start, limit, delta]) as name:
-    # In case dtype is not none, cast start, limit, and delta directly.
-    # Otherwise pass to convert_to_tensor. This is to handle
-    # the situation with:
-    #   tf.range(tf.constant(5), dtype=tf.float32)
-    # which is comparable with:
-    #   np.arange(np.int(5), dtype=np.float32)
-    if dtype is not None:
-      start = cast(start, dtype=dtype, name="start")
-      limit = cast(limit, dtype=dtype, name="limit")
-      delta = cast(delta, dtype=dtype, name="delta")
-    else:
-      start = ops.convert_to_tensor(start, name="start")
-      limit = ops.convert_to_tensor(limit, name="limit")
-      delta = ops.convert_to_tensor(delta, name="delta")
+    start = ops.convert_to_tensor(start, dtype=dtype, name="start")
+    limit = ops.convert_to_tensor(limit, dtype=dtype, name="limit")
+    delta = ops.convert_to_tensor(delta, dtype=dtype, name="delta")
 
     # infer dtype if not explicitly provided
     if dtype is None:
@@ -3474,10 +3465,6 @@ def _unsorted_segment_N(data, segment_ids, num_segments):
 def unsorted_segment_mean(data, segment_ids, num_segments, name=None):
   r"""Computes the mean along segments of a tensor.
 
-  Read [the section on
-  segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)
-  for an explanation of segments.
-
   This operator is similar to the unsorted segment sum operator found
   [here](../../../api_docs/python/math_ops.md#UnsortedSegmentSum).
   Instead of computing the sum over segments, it computes the mean of all
@@ -3567,10 +3554,6 @@ def sparse_segment_sum(data, indices, segment_ids, name=None,
                        num_segments=None):
   r"""Computes the sum along sparse segments of a tensor.
 
-  Read [the section on
-  segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)
-  for an explanation of segments.
-
   Like `tf.math.segment_sum`, but `segment_ids` can have rank less than `data`'s
   first dimension, selecting a subset of dimension 0, specified by `indices`.
   `segment_ids` is allowed to have missing ids, in which case the output will
@@ -3643,10 +3626,6 @@ def sparse_segment_sum_v2(data,
                           name=None):
   r"""Computes the sum along sparse segments of a tensor.
 
-  Read [the section on
-  segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)
-  for an explanation of segments.
-
   Like `tf.math.segment_sum`, but `segment_ids` can have rank less than `data`'s
   first dimension, selecting a subset of dimension 0, specified by `indices`.
   `segment_ids` is allowed to have missing ids, in which case the output will
@@ -3712,10 +3691,6 @@ def sparse_segment_mean(data,
                         num_segments=None):
   r"""Computes the mean along sparse segments of a tensor.
 
-  Read [the section on
-  segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)
-  for an explanation of segments.
-
   Like `tf.math.segment_mean`, but `segment_ids` can have rank less than
   `data`'s first dimension, selecting a subset of dimension 0, specified by
   `indices`.
@@ -3757,10 +3732,6 @@ def sparse_segment_mean_v2(data,
                            num_segments=None,
                            name=None):
   r"""Computes the mean along sparse segments of a tensor.
-
-  Read [the section on
-  segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)
-  for an explanation of segments.
 
   Like `tf.math.segment_mean`, but `segment_ids` can have rank less than
   `data`'s first dimension, selecting a subset of dimension 0, specified by
@@ -3833,10 +3804,6 @@ def sparse_segment_sqrt_n_v2(data,
                              num_segments=None,
                              name=None):
   r"""Computes the sum along sparse segments of a tensor divided by the sqrt(N).
-
-  Read [the section on
-  segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)
-  for an explanation of segments.
 
   Like `tf.sparse.segment_mean`, but instead of dividing by the size of the
   segment, `N`, divide by `sqrt(N)` instead.
